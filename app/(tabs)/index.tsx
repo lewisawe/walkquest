@@ -16,7 +16,7 @@ if (Platform.OS !== 'web') {
   UrlTile = Maps.UrlTile;
 }
 
-const OSM_TILES = 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const OSM_TILES = 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
 
 interface Waypoint {
   id: string;
@@ -53,10 +53,22 @@ export default function MapScreen() {
       return;
     }
 
-    const loc = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
-    setLocation(loc);
+    try {
+      // Try high accuracy first (GPS), but timeout after 5 seconds
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 5000,
+      });
+      setLocation(loc);
+    } catch (e) {
+      // Fallback to last known location
+      const lastKnown = await Location.getLastKnownPositionAsync();
+      if (lastKnown) {
+        setLocation(lastKnown);
+      } else {
+        setErrorMsg('Could not get your location. Make sure GPS is enabled and try outdoors.');
+      }
+    }
   }
 
   async function startGPSTracking() {
