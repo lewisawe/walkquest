@@ -1,19 +1,12 @@
-import { StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
+import { StyleSheet, View, Text, Pressable, ActivityIndicator, Platform } from 'react-native';
+import MapView, { Marker, UrlTile, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useEffect, useState, useRef } from 'react';
 
-const DARK_MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#1d2c4d' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#8ec3b9' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1a3646' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#304a7d' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#255763' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2c6675' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1626' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#283d6a' }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2f3948' }] },
-];
+// Free OpenStreetMap dark tile servers (no API key needed)
+const OSM_DARK_TILES = 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png';
+// Fallback if Stadia is slow:
+// const OSM_TILES = 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 interface Waypoint {
   id: string;
@@ -264,8 +257,7 @@ export default function MapScreen() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        provider={PROVIDER_GOOGLE}
-        customMapStyle={DARK_MAP_STYLE}
+        mapType="none"
         initialRegion={{
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
@@ -276,6 +268,12 @@ export default function MapScreen() {
         showsMyLocationButton={false}
         followsUserLocation={questState === 'active'}
       >
+        {/* Free OpenStreetMap dark tiles - no API key needed */}
+        <UrlTile
+          urlTemplate={OSM_DARK_TILES}
+          maximumZ={19}
+          flipY={false}
+        />
         {/* Waypoint markers */}
         {waypoints.map((wp) => (
           <Marker
