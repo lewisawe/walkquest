@@ -1,12 +1,22 @@
 import { StyleSheet, View, Text, Pressable, ActivityIndicator, Platform } from 'react-native';
-import MapView, { Marker, UrlTile, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useEffect, useState, useRef } from 'react';
 
-// Free OpenStreetMap dark tile servers (no API key needed)
-const OSM_DARK_TILES = 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png';
-// Fallback if Stadia is slow:
-// const OSM_TILES = 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+// Only import maps on native (crashes on web)
+let MapView: any = null;
+let Marker: any = null;
+let Polyline: any = null;
+let UrlTile: any = null;
+
+if (Platform.OS !== 'web') {
+  const Maps = require('react-native-maps');
+  MapView = Maps.default;
+  Marker = Maps.Marker;
+  Polyline = Maps.Polyline;
+  UrlTile = Maps.UrlTile;
+}
+
+const OSM_TILES = 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 interface Waypoint {
   id: string;
@@ -24,7 +34,7 @@ export default function MapScreen() {
   const [questState, setQuestState] = useState<QuestState>('idle');
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const [walkedPath, setWalkedPath] = useState<{ latitude: number; longitude: number }[]>([]);
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<any>(null);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
 
   useEffect(() => {
@@ -71,7 +81,7 @@ export default function MapScreen() {
   }
 
   function checkWaypointProximity(loc: Location.LocationObject) {
-    const TRIGGER_RADIUS = 30; // meters
+    const TRIGGER_RADIUS = 30;
 
     setWaypoints((prev) => {
       const nextWaypoint = prev.find((wp) => !wp.reached);
@@ -85,7 +95,6 @@ export default function MapScreen() {
       );
 
       if (distance <= TRIGGER_RADIUS) {
-        // Waypoint reached!
         const updated = prev.map((wp) =>
           wp.id === nextWaypoint.id ? { ...wp, reached: true } : wp
         );
@@ -105,13 +114,13 @@ export default function MapScreen() {
   }
 
   async function fetchNearbyWaypoints(lat: number, lng: number): Promise<Waypoint[]> {
-    const radius = 600; // meters
+    const radius = 600;
     const query = `
       [out:json][timeout:10];
       (
         node["highway"="crossing"](around:${radius},${lat},${lng});
         node["highway"="traffic_signals"](around:${radius},${lat},${lng});
-        node["amenity"~"bench|fountain|post_box|telephone"](around:${radius},${lat},${lng});
+        node["amenity"~"bench|fountain|post_box"](around:${radius},${lat},${lng});
       );
       out body 20;
     `;
@@ -126,7 +135,6 @@ export default function MapScreen() {
       const data = await response.json();
       const nodes = data.elements || [];
 
-      // Pick 3-5 waypoints that form a walkable route
       const selected = selectWaypoints(nodes, lat, lng, 3);
 
       return selected.map((node: any, index: number) => ({
@@ -138,35 +146,24 @@ export default function MapScreen() {
       }));
     } catch (error) {
       console.error('Overpass API error:', error);
-      // Fallback: generate waypoints in cardinal directions
       return generateFallbackWaypoints(lat, lng);
     }
   }
 
-  function selectWaypoints(
-    nodes: any[],
-    centerLat: number,
-    centerLng: number,
-    count: number
-  ): any[] {
-    if (nodes.length <= count) return nodes;
+  function selectWaypoints(nodes: any[], centerLat: number, centerLng: number, count: number): any[] {
+    if (nodes.length <= count) return nodes.length > 0 ? nodes : [];
 
-    // Sort by distance from center, pick spread-out points
     const withDistance = nodes.map((node) => ({
       ...node,
       distance: getDistanceMeters(centerLat, centerLng, node.lat, node.lon),
     }));
 
-    // Filter to reasonable walking distance (100m - 600m)
-    const inRange = withDistance.filter(
-      (n) => n.distance >= 100 && n.distance <= 600
-    );
+    const inRange = withDistance.filter((n) => n.distance >= 80 && n.distance <= 600);
 
     if (inRange.length < count) {
-      return withDistance.slice(0, count);
+      return withDistance.sort((a, b) => a.distance - b.distance).slice(0, count);
     }
 
-    // Pick evenly spaced points by angle from center
     const withAngle = inRange.map((node) => ({
       ...node,
       angle: Math.atan2(node.lat - centerLat, node.lon - centerLng),
@@ -184,7 +181,6 @@ export default function MapScreen() {
   }
 
   function generateFallbackWaypoints(lat: number, lng: number): Waypoint[] {
-    // Generate 3 waypoints ~200m away in different directions
     const offsets = [
       { dlat: 0.0018, dlng: 0.001 },
       { dlat: -0.001, dlng: 0.0018 },
@@ -211,18 +207,24 @@ export default function MapScreen() {
       location.coords.longitude
     );
 
-    setWaypoints(wps);
+    if (wps.length === 0) {
+      // No waypoints found, use fallback
+      const fallback = generateFallbackWaypoints(
+        location.coords.latitude,
+        location.coords.longitude
+      );
+      setWaypoints(fallback);
+    } else {
+      setWaypoints(wps);
+    }
+
     setQuestState('active');
     startGPSTracking();
   }
 
-  function getNextWaypoint(): Waypoint | undefined {
-    return waypoints.find((wp) => !wp.reached);
-  }
-
   function getDistanceToNext(): string {
     if (!location) return '—';
-    const next = getNextWaypoint();
+    const next = waypoints.find((wp) => !wp.reached);
     if (!next) return '—';
 
     const dist = getDistanceMeters(
@@ -235,6 +237,7 @@ export default function MapScreen() {
     return dist >= 1000 ? `${(dist / 1000).toFixed(1)} km` : `${Math.round(dist)} m`;
   }
 
+  // Loading state
   if (errorMsg) {
     return (
       <View style={styles.container}>
@@ -248,6 +251,26 @@ export default function MapScreen() {
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#C5962B" />
         <Text style={styles.loadingText}>Finding your location...</Text>
+      </View>
+    );
+  }
+
+  // Web fallback (no maps on web)
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>⚔️ WALKQUEST</Text>
+        <Text style={styles.loadingText}>
+          Maps are only available on mobile devices.
+        </Text>
+        <Text style={styles.loadingText}>
+          Open this app in Expo Go on your Android phone.
+        </Text>
+        {location && (
+          <Text style={styles.coordText}>
+            📍 {location.coords.latitude.toFixed(4)}, {location.coords.longitude.toFixed(4)}
+          </Text>
+        )}
       </View>
     );
   }
@@ -268,12 +291,13 @@ export default function MapScreen() {
         showsMyLocationButton={false}
         followsUserLocation={questState === 'active'}
       >
-        {/* Free OpenStreetMap dark tiles - no API key needed */}
+        {/* Free OpenStreetMap tiles - no API key needed */}
         <UrlTile
-          urlTemplate={OSM_DARK_TILES}
+          urlTemplate={OSM_TILES}
           maximumZ={19}
           flipY={false}
         />
+
         {/* Waypoint markers */}
         {waypoints.map((wp) => (
           <Marker
@@ -281,11 +305,11 @@ export default function MapScreen() {
             coordinate={{ latitude: wp.lat, longitude: wp.lng }}
             pinColor={wp.reached ? '#2B6B4F' : '#C5962B'}
             title={`Waypoint ${wp.order}`}
-            description={wp.reached ? 'Reached!' : 'Walk here'}
+            description={wp.reached ? '✓ Reached!' : 'Walk here'}
           />
         ))}
 
-        {/* Route line between waypoints */}
+        {/* Route line */}
         {waypoints.length > 0 && (
           <Polyline
             coordinates={waypoints.map((wp) => ({
@@ -325,7 +349,7 @@ export default function MapScreen() {
 
         {questState === 'active' && (
           <View style={styles.statusCard}>
-            <Text style={styles.questTitle}>THE NORTHERN PATROL</Text>
+            <Text style={styles.questTitle}>⚔️ THE NORTHERN PATROL</Text>
             <Text style={styles.distanceText}>
               Next waypoint: {getDistanceToNext()} →
             </Text>
@@ -342,7 +366,7 @@ export default function MapScreen() {
               {waypoints.length} waypoints cleared
             </Text>
             <Pressable
-              style={styles.startButton}
+              style={[styles.startButton, { marginTop: 12 }]}
               onPress={() => {
                 setQuestState('idle');
                 setWaypoints([]);
@@ -358,13 +382,7 @@ export default function MapScreen() {
   );
 }
 
-// Haversine formula for distance between two GPS points
-function getDistanceMeters(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
-): number {
+function getDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLng = ((lng2 - lng1) * Math.PI) / 180;
@@ -388,6 +406,12 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
     width: '100%',
+  },
+  title: {
+    color: '#C5962B',
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 20,
   },
   hud: {
     position: 'absolute',
@@ -454,6 +478,11 @@ const styles = StyleSheet.create({
     color: '#F5E6D3',
     fontSize: 16,
     marginTop: 12,
+  },
+  coordText: {
+    color: '#8ec3b9',
+    fontSize: 14,
+    marginTop: 8,
   },
   errorText: {
     color: '#8B1A1A',
